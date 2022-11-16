@@ -1,0 +1,531 @@
+7.1 Behavioural Analysis
+
+7.1.3 Example of GLMM, and plotting scripts (Pure species preference for H. t. tristero)
+
+### READ IN DATA
+rm(list = ls())
+setwd("C:/Users/Saoirse/Documents/Masters_thesis/Behavioural_cyd_tri/10_03_21_Updated_scripts/")
+re<-read.csv("results_compiled.csv",
+header=T,stringsAsFactors = F)
+females<-read.csv("females.csv",
+header=T,stringsAsFactors = F)
+males<-read.csv("males.csv",
+header=T,stringsAsFactors = F)
+View(re)
+
+###Change/correct a couple of issues with table##
+#trimming wide spaces and replacing ccy with cc##
+for(corrector in names(re)[names(re)!="Notes"]){
+if(!is.numeric(re[,corrector])){
+re[,corrector]<-trimws(re[,corrector])
+}
+}
+for(corrector in names(females)[names(females)!="notes"]){
+32
+if(!is.numeric(females[,corrector])){
+females[,corrector]<-trimws(females[,corrector])
+}
+}
+for(corrector in names(males)[names(males)!="notes"]){
+if(!is.numeric(males[,corrector])){
+males[,corrector]<-trimws(males[,corrector])
+}
+}
+females$type[females$type=="CCY"]<-"CC"
+
+### CHECK IF IDS FROM RESULTS APPEAR IN INDIVIDUAL TABLE AND CHECK FOR DUPLICATES IN INDIVIDUAL TABLES
+#Females table
+re$Cyd_ID%in%females$insectary_ID
+sum(duplicated(females$insectary_ID))
+re$Tri_ID%in%females$insectary_ID
+sum(duplicated(females$insectary_ID))
+
+#Males table
+re$Male_ID%in%males$insectary_ID
+sum(duplicated(males$insectary_ID))
+
+### DISCARD DATA FROM EXPERIMENTS WITH YELLOW CYDNO
+re$yellow_female<-sapply(re$Cyd_ID,function(x) females$YellFW[females$insectary_ID==x])
+table(re$yellow_female)
+re<-re[re$yellow_female!="Y",]
+
+### MAKE SURE WE HAVE DATA FROM JUST CYDNO, TRISTERO FEMALES
+
+### (SOMETIMES, LINA SENDS TABLES WHICH CONTAIN DATA GENERATED WITH OTHER FEMALES)
+re$Cyd_type<-sapply(re$Cyd_ID,function(x) females$type[females$insectary_ID==x])
+re$Tri_type<-sapply(re$Tri_ID,function(x) females$type[females$insectary_ID==x])
+33
+re<-re[re$Cyd_type=="CC"&re$Tri_type=="TTC",]
+
+### CREATE NEW CONDENSED TABLE FOR MALE PREFERENCES
+#Get unique males
+unique_males<-unique(re$Male_ID)
+
+#Sum up interactions with cydno female
+interact_cydno<-sapply(unique_males,function(x) sum(re$Interest_Cyd[re$Male_ID==x])+sum(re$Mate_Cyd[re$Male_ID==x]))
+
+#Sum up interactions with tristero female
+interact_tristero<-sapply(unique_males,function(x) sum(re$Interest_Tri[re$Male_ID==x])+sum(re$Mate_Tri[re$Male_ID==x]))
+
+#Create new table
+new_table<-data.frame(Male=unique_males,
+minutes_cyd=interact_cydno,
+minutes_tri=interact_tristero)
+
+#Add male type
+new_table$type<-sapply(unique_males,function(x) males$type[males$insectary_ID==x])
+
+#Add whether male has red on forewing
+new_table$redYN<-sapply(unique_males,function(x) males$redFW_Y_N[males$insectary_ID==x])
+
+#Calculate minutes a male appeared
+new_table$total_minutes<-(new_table$minutes_cyd+new_table$minutes_tri)
+
+#Discard males that didn't show responses
+new_table<-new_table[new_table$total_minutes>0,]
+
+#Calculate male preference
+new_table$preference<-new_table$minutes_tri/new_table$total_minutes
+34
+
+#Check distribution of data points per male
+hist(new_table$total_minutes)
+
+#load necessary packages
+if(!"lme4"%in% rownames(installed.packages())){
+install.packages("lme4")
+}
+library(lme4)
+if(!"emmeans"%in% rownames(installed.packages())){
+install.packages("emmeans")
+}
+library(emmeans)
+
+#Build GLMM w/ type as factor
+sub_pure_BC<-new_table[new_table$type%in%c("CC", "TTC", "TLC", "MBC"), ]
+mod1<- glmer(cbind(minutes_tri,minutes_cyd)~type+(1|Male), family = "binomial", data = sub_pure_BC)
+summary(mod1)
+Nullmod1<-glmer(cbind(minutes_tri,minutes_cyd)~+(1|Male), family = "binomial", data = sub_pure_BC)
+summary(Nullmod1)
+
+#compare model to null - Anova(for P - value)
+results_table<- anova(mod1,Nullmod1)
+results_table
+
+#Extract model estimators
+extracted_estimators<- emmeans(mod1, ~type)
+str(extracted_estimators)
+summary(extracted_estimators)
+plot(extracted_estimators)
+
+#Get estimators, wrap it in summary command (helps extracting values)
+extracted_estimators<- summary(emmeans(mod1, ~type))
+
+##pairwise comparison without correction
+pvalues<-summary(emmeans(mod1,pairwise~type, adjust="none"))$contrasts
+pvalues$p.value<-p.adjust(pvalues$p.value, method= "bonferroni")
+sprintf(pvalues$p.value, fmt= '%#.10f')
+print(pvalues)
+
+#transform
+extracted_estimators$emmean<-plogis(extracted_estimators$emmean)
+extracted_estimators$asymp.LCL<-plogis(extracted_estimators$asymp.LCL)
+extracted_estimators$asymp.UCL<-plogis(extracted_estimators$asymp.UCL)
+
+#Now store them on variables
+u_lim_CC<- extracted_estimators$asymp.UCL[extracted_estimators$type=="CC"]
+l_lim_CC<- extracted_estimators$asymp.LCL[extracted_estimators$type=="CC"]
+u_lim_TTC<- extracted_estimators$asymp.UCL[extracted_estimators$type=="TTC"]
+l_lim_TTC<- extracted_estimators$asymp.LCL[extracted_estimators$type=="TTC"]
+u_lim_MBC<- extracted_estimators$asymp.UCL[extracted_estimators$type=="MBC"]
+l_lim_MBC<- extracted_estimators$asymp.LCL[extracted_estimators$type=="MBC"]
+u_lim_TLC<- extracted_estimators$asymp.UCL[extracted_estimators$type=="TLC"]
+l_lim_TLC<- extracted_estimators$asymp.LCL[extracted_estimators$type=="TLC"]
+mean_CC<- extracted_estimators$emmean[extracted_estimators$type=="CC"]
+36
+mean_TTC<- extracted_estimators$emmean[extracted_estimators$type=="TTC"]
+mean_MBC<- extracted_estimators$emmean[extracted_estimators$type=="MBC"]
+mean_TLC<- extracted_estimators$emmean[extracted_estimators$type=="TLC"]
+
+#Plot data
+#Create graphs directory if it doesn't exist yet
+if(!"graphs"%in%list.files()){
+dir.create("graphs")
+}
+table(new_table$type)
+
+#Open png device
+par(mar=c(2.5,4,3,4))
+plot(1,1, type="n",xlim=c(0, 12),ylim=0:1,xaxs="i",
+xlab="",ylab="",xaxt="n",yaxt="n", cex=0.5)
+abline(h=0.5, col="black", lwd=1, lty=2)
+points(jitter(rep((1.5),sum(new_table$type=="CC")),5),
+new_table$preference[new_table$type=="CC"],
+cex=0.5*sqrt(new_table$total_minutes[new_table$type=="CC"]),
+pch=21, col= "dark grey", bg= adjustcolor("dark grey",0.6))
+points(jitter(rep((4.5),sum(new_table$type=="TTC")),5),
+new_table$preference[new_table$type=="TTC"],
+cex=0.5*sqrt(new_table$total_minutes[new_table$type=="TTC"]),
+pch=21,col= "red", bg= adjustcolor("red",0.6))
+points(jitter(rep((7.5),sum(new_table$type=="MBC")),4),
+new_table$preference[new_table$type=="MBC"],
+cex=0.5*sqrt(new_table$total_minutes[new_table$type=="MBC"]),
+pch=21,col= "red", bg= adjustcolor("red",0.6))
+points(jitter(rep((10.5),sum(new_table$type=="TLC")),3),
+new_table$preference[new_table$type=="TLC"],
+cex=0.5*sqrt(new_table$total_minutes[new_table$type=="TLC"]),
+pch=21, col= "bisque2", bg= adjustcolor("bisque2",0.6))
+rect(1.4, mean_CC-0.003, 1.6, mean_CC+0.003,
+angle = 90, col="black", border = NA, lwd=0)
+rect(4.4, mean_TTC-0.003, 4.6, mean_TTC+0.003,
+angle = 90, col="black", border = NA, lwd=0)
+rect(7.4, mean_MBC-0.003, 7.6, mean_MBC+0.003,
+angle = 90, col="black", border = NA, lwd=0)
+rect(10.4, mean_TLC-0.003, 10.6, mean_TLC+0.003,
+angle = 90, col="black",border = NA, lwd=0)
+axis(3,at= c(1.5, 10.5), c("",""),lwd=1, pos= 1.1, tcl=0.4, outer= TRUE)
+axis(1,at=c(1.5, 4.5, 7.5, 10.5), c("CYD(35)", "TRI(25)", "BEL(27)","LIN(21)"),
+lwd=0, cex.axis=0.8)
+axis(2,at=c(0.0, 0.5, 1), c("0", "0.5", "1"),
+las=2, font = 1)
+mtext("***p(<0.001)",3,line=2,font =1)
+mtext(substitute(paste("Preference for ",italic('H. t. tristero')," female")),
+2,line=3)
+arrows(x0=1.5, y0=l_lim_CC, x1=1.5, y1=u_lim_CC, code=3,
+38
+angle=90, col="black", lwd=1)
+arrows(x0=4.5, y0=l_lim_TTC, x1=4.5, y1=u_lim_TTC, code=3,
+angle=90, col="black", lwd=1)
+arrows(x0=7.5, y0=l_lim_MBC, x1=7.5, y1=u_lim_MBC, code=3,
+angle=90, col="black", lwd=1)
+arrows(x0=10.5, y0=l_lim_TLC, x1=10.5, y1=u_lim_TLC, code=3,
+angle=90, col="black", lwd=1)
+abline(v=3, col="black", lwd=1, lty=1)
+abline(v=6, col="black", lwd=1, lty=1)
+abline(v=9, col="black", lwd=1, lty=1)
+
+#check range of data points
+range(new_table$total_minutes[new_table$type%in%c("CC", "TTC", "TLC", "MBC")])
+
+#Take some five values that seem more or less adequate
+dots_for<-c(5,15,25,35)
+par(xpd=T)
+points(rep(13.5, 4),
+c(0.4,0.51,0.62,0.73),
+cex=0.5*sqrt(dots_for),pch=21, col= "dark grey",
+bg=adjustcolor("dark gray",0.8))
+text(rep(12.75, 4),
+c(0.4,0.51,0.62,0.73),
+as.character(dots_for))
+par(xpd=F)
+
+#Here, name file, determine resolution in dpi (dots per inch)
+#And you say how many pixels your png should be wide and high
+39
+dev.copy(png, "graphs/Pure.png",res=300,width=1600,height=1400)
+dev.off()
+
+7.2 Genomic Analysis
+
+7.2.1 Mapping
+
+##Create BWA index##
+bwa index -p Hmel2.5bwaidx -a bwtsw Heliconius_melpomene_melpomene_Hmel2.5.fa
+##-p (name of index can be whatever you choose) -a(changes depending on long (bwtsw) or short reads (is))
+## bwa index -p whatevername - a bwtsw/is referencegenome.fa
+
+##Convert any files (not all have to be converted) to .fq.gz##
+bzcat HM_CS17.read1.bz2 | gzip -c >HM_CS17_R1.fq.gz
+##run bwa mem on paired reads - to map to reference##
+#!/bin/bash
+#SBATCH --partition=usual
+#SBATCH --job-name="bwa"
+#SBATCH --mail-user=Saoirse.McMahon@campus.lmu.de
+#SBATCH --mail-type=END
+#SBATCH --time=1-00:00:00
+module load bwa/0.7.15
+bwa mem /data/home/wolfproj/wolfproj-07/bellula_tristero_genomic_data/Heliconius_melpomene_melpomene_Hmel2.5.scaffolds.fa /data/home/wolfproj/wolfproj-07/bellula_tristero_genomic_data/tristero/CAM40013_combined_R1.fq.gz /data/home/wolfproj/wolfproj-07/bellula_tristero_genomic_data/tristero/CAM40013_combined_R2.fq.gz > /data/home/wolfproj/wolfproj-07/bellula_tristero_genomic_data/tristero/CAM40013_R1R2.sam
+## bwa mem reference.fa read1.fq.gz read2.fq.gz > r1r2.sam ##
+
+##Convert sam to bam files##
+#!/bin/bash
+#SBATCH --partition=usual
+#SBATCH --job-name="SamToBam"
+#SBATCH --mail-user=Saoirse.McMahon@campus.lmu.de
+#SBATCH --mail-type=END
+#SBATCH --time=1-00:00:00
+module load samtools/1.4.1
+#loop through directories
+for dir in */
+do
+
+#loop through files
+for file in "$dir"/*.sam
+do
+
+#check if file exists
+if [[ -f $file ]]
+then
+
+#write message into output, which file is being converted
+echo "Converting $file to ${file%.*}.bam"
+
+#convert
+samtools view -bS $file > ${file%.*}.bam
+fi
+done
+done
+
+##Check if bam files are truncated (not necessary but handy for checking)##
+#!/bin/bash
+#SBATCH --partition=usual
+#SBATCH --job-name="Checktruncated"
+#SBATCH --mail-user=Saoirse.McMahon@campus.lmu.de
+#SBATCH --mail-type=END
+#SBATCH --output=truncatedcheck
+#SBATCH --time=1-00:00:00
+module load samtools/1.4.1
+samtools quickcheck -v *.bam > bad_bams.fofn && echo 'all ok' || echo 'some files failed check, see bad_bams.fofn'
+
+##Sort bam files for SNP calling##
+#!/bin/bash
+#SBATCH --partition=usual
+#SBATCH --job-name="SortBam"
+#SBATCH --mail-user=Saoirse.McMahon@campus.lmu.de
+#SBATCH --mail-type=END
+#SBATCH --time=1-00:00:00
+module load samtools/1.4.1
+#loop through directories
+for dir in */
+do
+
+#loop through files
+for file in "$dir"/*.bam
+do
+
+#check if file exists
+if [[ -f $file ]]
+then
+
+#write message into output, which file is being converted
+echo "Converting $file to ${file%.*}.sorted.bam"
+
+#convert
+samtools sort $file -o ${file%.*}.sorted.bam
+fi
+done
+done
+
+##Indexing sorted bam files for calling snps##
+#!/bin/bash
+#SBATCH --partition=usual
+#SBATCH --job-name="IndexBam"
+#SBATCH --mail-user=Saoirse.McMahon@campus.lmu.de
+#SBATCH --mail-type=END
+#SBATCH --time=1-00:00:00
+module load samtools/1.4.1
+
+#loop through directories
+for dir in */
+do
+
+#loop through files
+for file in "$dir"/*.sorted.bam
+do
+
+#check if file exists
+if [[ -f $file ]]
+then
+
+#write message into output, which file is being converted
+echo "indexing $file"
+#index
+samtools index $file
+fi
+done
+done
+43
+
+##Extract melpomene and numata idividuals from simons data using bcf tools##
+##- tried with gatk super overcomplicated and didn't work##
+#!/bin/bash
+#SBATCH --partition=usual
+#SBATCH --job-name="Bcf_Ext_ind"
+#SBATCH --mail-user=Saoirse.McMahon@campus.lmu.de
+#SBATCH --output=Bcf_Ext_ind
+#SBATCH --time=1-00:00:00
+module load bcftools/1.4.1
+bcftools view -s nu_sil.MJ09-4184 -s other_ind_ids Wbar92.DP8MP4BIMAC2HET75.hapFem.minimal.vcf > HNgenomic_combined.vcf
+## bcftools view -s samplename variantfile.vcf > combinedoutputfile.vcf##
+7.2.2 SNP Calling
+
+##Use GATK(Haplotypecaller) to call genotypes##
+##First move/copy/download GenomeAnalysisTK.jar into a folder in your directory##
+#!/bin/bash
+#SBATCH --partition=prevail
+#SBATCH --job-name="CallingSnp"
+#SBATCH --mail-user=Saoirse.McMahon@campus.lmu.de
+#SBATCH --mail-type=END
+#SBATCH --time=6-23:59:59
+java -jar /data/home/wolfproj/wolfproj-07/bellula_tristero_genomic_data/GenomeAnalysisTK.jar -T HaplotypeCaller -R /data/home/wolfproj/wolfproj-07/bellula_tristero_genomic_data/Heliconius_melpomene_melpomene_Hmel2.5.scaffolds.fa -I /data/home/wolfproj/wolfproj-07/bellula_tristero_genomic_data/bellula/24228/dedupl.sorted.bam --
+44
+emitRefConfidence GVCF --variant_index_type LINEAR --variant_index_parameter 128000 --heterozygosity 0.02 -O /data/home/wolfproj/wolfproj-07/bellula_tristero_genomic_data/bellula/24228/outputNEW.g.vcf
+##java -jar path/to/GenomeAnalysisTK.jar -T HaplotypeCaller -R reference.fa -I inputindividualfile.sorted.bam --emitRefConfidence GVCF givesconfidencescores --variant_index_type LINEAR --variant_index_parameter 128000 bothvariantparametersforformatting --heterozygosity levelofdesiredhwterozygosity 0-1 -O outputfile.g.vcf##
+
+##Genotype files to be able to filter by genotype (QUAL etc.). -allSites - keeps invariants also
+used to allow for larger smaple and increase power), Also requires you to have
+GenomeAnalysisTK.jar in directory (server is not updated)##
+#!/bin/bash
+#SBATCH -w 'cruncher'
+#SBATCH --partition=usual
+#SBATCH --job-name="GenotypeAllsites"
+#SBATCH --mail-user=Saoirse.McMahon@campus.lmu.de
+#SBATCH --mail-type=END
+#SBATCH --time=1-00:00:00
+java -jar ~/bellula_tristero_genomic_data/GenomeAnalysisTK.jar -T GenotypeGVCFs \
+-R /data/home/wolfproj/wolfproj-07/bellula_tristero_genomic_data/Reference/Heliconius_melpomene_melpomene_Hmel2.5.scaffolds.fa \
+-V ~/bellula_tristero_genomic_data/SNPcalled/CCydno_combined.g.vcf \
+-o CCydnogenotyped_invariants.g.vcf \
+-allSites
+
+7.2.3 Filtering
+
+##Filter for biallelic, minimunm qualitty of 30, minimum depth of coverage 8,
+max missing individuals at any given site 6(of 9),remove indels, recode is specific to vcftools
+45
+to write out, recode info all keeps tag information (I think), stdout -specify output file name##
+#!/bin/bash
+#SBATCH -w 'cruncher'
+#SBATCH --partition=usual
+#SBATCH --job-name="vcftools"
+#SBATCH --mail-user=Saoirse.McMahon@campus.lmu.de
+#SBATCH --mail-type=END
+#SBATCH --time=1-00:00:00
+module load vcftools/0.1.14
+vcftools --vcf TTCgenotyped_invariants.g.vcf --min-alleles 1 --max-alleles 2 --minQ 30 \
+--minDP 8 --max-missing 0.35 --remove-indels --recode --recode-INFO-all --stdout \
+> TTCinvariants_filtered.g.vcf
+
+###remove all */* small invariants because it interferes with admixture analysis###
+awk ‘!/*/’ input.vcf > input_NEW.vcf
+
+##Files need to be bgzippped (bgzip) and tab indexed (tabix) for this step and next)##
+bgzip filename.vcf
+tabix filename.vcf.gz
+##to un block zip##
+bgzip -d filename.vcf.gz
+
+##Order all files by chromosome rather than by scaffold (Aligned using reference genome which is
+scaffold organised)##
+#!/bin/bash
+#SBATCH -w 'cruncher'
+#SBATCH --partition=usual
+#SBATCH --job-name="orderbychromes"
+#SBATCH --mail-user=Saoirse.McMahon@campus.lmu.de
+#SBATCH --mail-type=END
+#SBATCH --time=1-00:00:00
+python ~/bellula_tristero_genomic_data/Filtered/vcfChromTransfer.py \
+-v /data/home/wolfproj/wolfproj-07/bellula_tristero_genomic_data/Filtered/TTCinvariants_filtered.g.vcf \
+-t /data/home/wolfproj/wolfproj-07/bellula_tristero_genomic_data/Filtered/coordinates.txt \
+>> /data/home/wolfproj/wolfproj-07/bellula_tristero_genomic_data/Filtered/trisinvco.snps.vcf
+
+##Filter out sites where more than 75% of individuals are heterozygous for the reference
+#!/bin/bash
+#SBATCH -w 'cruncher'
+#SBATCH --partition=usual
+#SBATCH --job-name="heterozygousfilter"
+#SBATCH --mail-user=Saoirse.McMahon@campus.lmu.de
+#SBATCH --mail-type=END
+#SBATCH --time=1-00:00:00
+java -jar /data/home/wolfproj/wolfproj-07/bellula_tristero_genomic_data/Filtered/ChromOrderedFiltered/jvarkit/dist/vcffilterjdk.jar \
+-e 'return variant.getGenotypes().stream().filter(G->G.isHet()).count()< 7;' \
+/data/home/wolfproj/wolfproj-07/bellula_tristero_genomic_data/Filtered/OnlyGenotyped/TTCgenomic_genotyped.g.vcf \
+> tristerohet.snps.vcf.gz
+47
+
+7.2.4 Admixture analysis
+
+##Create .geno file for all individuals (combines and converts), Martin (2019) uses this specific format for the rest of the admixture analysis###
+#!/bin/bash
+#SBATCH -w 'cruncher'
+#SBATCH --partition=usual
+#SBATCH --job-name="vcftogenoMT"
+#SBATCH --mail-user=Saoirse.McMahon@campus.lmu.de
+#SBATCH --mail-type=END
+#SBATCH --time=1-00:00:00
+python /data/home/wolfproj/wolfproj-07/ABBA_BABA_tut/data/genomics_general-master/
+-i numata.vcf.gz \
+-i melpomene.vcf.gz \
+-i bellinvco_NEW.vcf.gz \
+-i trisinvco_NEW.vcf.gz \
+--threads 25 | bgzip > Belnumtrismel.geno.gz
+
+##Calculate fd values for relevant sites -g .geno -f phased or unphased -o output -w window size (e.g 20kb) -m ? -s how much window slides by##
+## -P1 sister allopatric -P2 sister sympatric -P3 sympatric not sister -O outgroup -T no.of threads
+##--popsFile file needs to be created with individual labels and what population they are e.g CAM40043 mel_bel
+##tab delimited
+#!/bin/bash
+#SBATCH -w 'cruncher'
+#SBATCH --job-name="ABBABABA"
+#SBATCH --mail-user=Saoirse.McMahon@campus.lmu.de
+#SBATCH --mail-type=END
+#SBATCH --time=1-00:00:00
+48
+Python /data/home/wolfproj/wolfproj-07/ABBA_BABA_tut/data/genomics_general-master/ABBABABAwindows.py \
+-g Belnumtrismel.geno.gz -f phased -o Admixprop20kb100m.csv -w 20000 -m 100 -s 5000 \
+-P1 mel_mel -P2 mel_bel -P3 tim_tri -O num -T 2 --popsFile Population_data.pop.txt
+7.2.4 Recombination rate correlations
+
+#READ IN DATA
+rm(list = ls())
+t1<-read.csv("C:/Users/Saoirse/Documents/Masters_thesis/Informatics_shtuff/correctCTB100kb100mMD.csv", header=T,stringsAsFactors = F)
+t2<-read.csv("C:/Users/Saoirse/Documents/Masters_thesis/Informatics_shtuff/Crossover_recombination_rate.csv", header=T,stringsAsFactors = F)
+
+#MAKE SURE ADMIXTURE DATA AND RECOMBINATION DATA SETS ARE SAME LENGTH (ADMIXTURE ANALYSIS STOPPED AT CHR. 20#
+t1<- t1[c(1:2470),]
+t2<- t2[c(1:2470),]
+
+#COMPILE BOTH DATA SETS
+t3<- cbind(t1, window_rec_rates= t2$window_rec_rates)
+
+#JUST INTERESTED IN ADMIXTURE SO SUBSET FD
+t3<-t3[!is.na(t3$fd),]
+
+#CHECK IF FD SOMETIMES EQUAL TO GREAT THAN 1 OR LESS THAN -1 AND GET RID OF THESE VALUES
+range(t3$fd,na.rm = T)
+sum(t3$fd>1|t3$fd<(-1))/length(t3$fd)
+
+#EQUAL ALL NEGAITVE VALUES (INDICATING ANCESTRAL STRUCTURE) TO ZERO AS WE ONLY CARE ABOUT WHAT IS ADMIXTURE (POSITIVE VALUES) STRUCTURE
+t3$fd[t3$fd<0]<-0
+
+#GET ANNOTATION FOR EACH CANDIDATE GENE AND OPTIX##
+annotation<-read.csv("C:/Users/Saoirse/Documents/Masters_thesis/Informatics_shtuff/annotation.csv", header=T,stringsAsFactors = F)
+glut_rec<-"HMEL009992g4"
+regucalcin1<-"HMEL013552g1"
+49
+regucalcin2<-"HMEL034199g1"
+optix <- "HMEL001028"
+pos_optix<-c(1058778, 1059581)
+pos_glut_rec<-c(annotation$start[annotation$gene_id==glut_rec],annotation$end[annotation$gene_id==glut_rec])
+pos_regucalcin1<-c(annotation$start[annotation$gene_id==regucalcin1],annotation$end[annotation$gene_id==regucalcin1])
+pos_regucalcin2<-c(annotation$start[annotation$gene_id==regucalcin2],annotation$end[annotation$gene_id==regucalcin2])
+
+#HIGHLIGHT WINDOWS CONTAING CANDIDATE PREFERENCE LOCUS AND OPTIX
+highlight_df <- t3[c(2130, 2124 ), ]
+
+#PLOT CORRELATION USING LOESS SPAN AVERAGING
+p <- ggplot(t3, aes(window_rec_rates, fd)) +
+xlab("Crossover Rec. Rate (cM/Mb)") +
+ylab ("Admixture Prop. (fd)") +
+geom_point(alpha= 0.1, col = "dark grey") +
+geom_smooth(method = "loess", se = FALSE, col= "dark grey", lwd = 1) +
+geom_point(data=highlight_df,
+aes(x=window_rec_rates,y=fd),
+color=c("red", 'black'),
+size=1)
+p + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_line(colour = "black"))
+
+#SAVE NAME WITH DESIRED HEIGHT AND WIDTH OF PLOT
+ggsave(path = "C:/Users/Saoirse/Documents/Masters_thesis/Informatics_shtuff/graphs/",
+width = 3.5, height = 4, device='tiff', filename = "Correct_Tristero_Recomb_loess.png", dpi=700)
